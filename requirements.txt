@@ -1,0 +1,28 @@
+# Qwen3-VL-4B Benchmark Suite — Python Dependencies
+# Install: pip install -r requirements.txt
+
+# HTTP client for benchmark requests
+aiohttp>=3.9.0
+requests>=2.31.0
+
+# Configuration
+pyyaml>=6.0
+
+# Data processing
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Image handling
+Pillow>=10.0.0
+
+# Visualization / Charts
+matplotlib>=3.7.0
+
+# GPU monitoring (optional, fallback to nvidia-smi)
+# pynvml>=11.5.0
+
+# Progress display
+tqdm>=4.65.0
+
+# Cloud Execution (Phase 3)
+modal>=0.60.0

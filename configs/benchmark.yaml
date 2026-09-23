@@ -1,0 +1,114 @@
+# =============================================================================
+# Qwen3-VL-4B Benchmark — Central Configuration
+# =============================================================================
+# This file is the single source of truth for all benchmark parameters.
+# Do NOT modify during a benchmark run (config must be frozen before measured runs).
+# See: docs/qwen3_vl_4b_llamacpp_benchmark_agent_prompt.md §30
+# =============================================================================
+
+benchmark:
+  # Suite identification
+  suite_id_prefix: "qwen3vl4b"
+
+  # Warm-up policy (§13)
+  warmup_requests: 5
+
+  # Generation config — fixed for ALL variants (§8.2)
+  generation:
+    prompt: "Describe the important objects, text, and events visible in this image. Be concise and factual."
+    temperature: 0.0
+    seed: 42
+    max_tokens: 256
+    max_tokens_decode_heavy: 512  # optional S5
+    stream: true
+    cache_prompt: false  # §12 — cold-request behavior
+
+  # llama-server flags — fixed for ALL variants (§10)
+  server:
+    host: "127.0.0.1"
+    port: 8080
+    gpu_layers: -1            # offload all layers
+    flash_attention: true
+    batch_size: 512
+    ubatch_size: 256
+    kv_k_type: "f16"          # §20 — KV cache main test
+    kv_v_type: "f16"
+    metrics: true
+    slots: true
+    perf: true
+    log_disable: false
+    no_cache_prompt: true      # §12
+
+  # Context configuration (§11)
+  context:
+    preferred_per_slot: 8192
+    fallback_per_slot: 4096
+
+  # Workload matrix (§14)
+  workloads:
+    - id: "S1_ccu1_small"
+      scenario: "S1"
+      ccu: 1
+      dataset: "small"
+      max_tokens: 256
+      runs: 10
+
+    - id: "S2_ccu1_normal"
+      scenario: "S2"
+      ccu: 1
+      dataset: "normal"
+      max_tokens: 256
+      runs: 30
+
+    - id: "S3_ccu1_large"
+      scenario: "S3"
+      ccu: 1
+      dataset: "large"
+      max_tokens: 256
+      runs: 10
+
+    - id: "S4_ccu2_normal"
+      scenario: "S4"
+      ccu: 2
+      dataset: "normal"
+      max_tokens: 256
+      pairs: 30
+
+    - id: "S5_ccu1_normal_decode_heavy"
+      scenario: "S5"
+      ccu: 1
+      dataset: "normal"
+      max_tokens: 512
+      runs: 10
+      optional: true
+
+  # GPU monitor (§18)
+  gpu_monitor:
+    sampling_interval_ms: 200
+    use_nvml: false  # fallback to nvidia-smi
+
+  # Fail-fast thresholds (§32)
+  fail_fast:
+    max_failure_rate: 0.05   # 5%
+    server_health_timeout_s: 120
+    request_timeout_s: 300
+
+# Accuracy configuration (§9, §24)
+accuracy:
+  mode: "quick"  # "quick" or "full"
+  quick_samples_per_dataset: 50
+  full_samples_per_dataset: 200
+  datasets:
+    - "textvqa"
+    - "docvqa"
+    - "chartvqa"
+
+# Paths
+paths:
+  llama_cpp_dir: "./llama.cpp"
+  llama_server: "./llama.cpp/build/bin/llama-server"
+  llama_quantize: "./llama.cpp/build/bin/llama-quantize"
+  llama_cli: "./llama.cpp/build/bin/llama-cli"
+  models_dir: "./models"
+  benchmark_data_dir: "./benchmark_data"
+  results_dir: "./results"

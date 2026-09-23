@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.env/
+.venv/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+
+# Project specific
+models/
+results/
+benchmark_data/
+*.zip
+*.log

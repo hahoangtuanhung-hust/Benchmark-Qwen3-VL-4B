@@ -1,0 +1,62 @@
+# =============================================================================
+# Qwen3-VL-4B Benchmark — Model Artifacts Configuration
+# =============================================================================
+# Strategy:
+#   1. Download the base FP16 model from Qwen/Qwen3-VL-4B-Instruct
+#   2. Convert it to GGUF F16 via convert_hf_to_gguf.py
+#   3. Use llama-quantize to create all quantized variants from the F16 GGUF
+# =============================================================================
+
+model:
+  name: "Qwen3-VL-4B-Instruct"
+  architecture: "qwen3vl"
+
+# Base source — all models derive from this single HF repo
+base_model:
+  hf_repo: "Qwen/Qwen3-VL-4B-Instruct"
+  hf_cache_dir: "models/base_hf_cache"
+
+# mmproj — Vision encoder (§3)
+# MUST be FP16 for main benchmark to isolate LLM quantization effects
+mmproj:
+  type: "f16"
+  filename: "mmproj-Qwen3-VL-4B-Instruct-f16.gguf"
+  directory: "models/mmproj"
+
+# Benchmark variants — all produced from base FP16 GGUF via llama-quantize
+# The "quantize_type" field maps to llama-quantize's supported types
+requested_precisions:
+  - label: "FP16"
+    semantics: "Full 16-bit floating point weights and activations"
+    quantize_type: "F16"
+    directory: "models/fp16"
+    filename: "Qwen3-VL-4B-Instruct-F16.gguf"
+    notes: "Baseline. Direct output of convert_hf_to_gguf.py."
+
+  - label: "Q8_0"
+    semantics: "8-bit integer quantization (proxy for FP8)"
+    quantize_type: "Q8_0"
+    directory: "models/q8_0"
+    filename: "Qwen3-VL-4B-Instruct-Q8_0.gguf"
+    notes: "Closest llama.cpp native equivalent to FP8."
+
+  - label: "Q4_K_M"
+    semantics: "4-bit quantization with k-quant medium (proxy for INT4)"
+    quantize_type: "Q4_K_M"
+    directory: "models/q4_k_m"
+    filename: "Qwen3-VL-4B-Instruct-Q4_K_M.gguf"
+    notes: "Closest llama.cpp native equivalent to INT4/W4A16."
+
+  - label: "Q5_K_M"
+    semantics: "5-bit quantization with k-quant medium"
+    quantize_type: "Q5_K_M"
+    directory: "models/q5_k_m"
+    filename: "Qwen3-VL-4B-Instruct-Q5_K_M.gguf"
+    notes: "Intermediate between Q4 and Q8. Good accuracy/speed trade-off."
+
+  - label: "Q4_0"
+    semantics: "4-bit quantization legacy (proxy for W4A8)"
+    quantize_type: "Q4_0"
+    directory: "models/q4_0"
+    filename: "Qwen3-VL-4B-Instruct-Q4_0.gguf"
+    notes: "Smallest/fastest variant. Closest proxy for W4A8."

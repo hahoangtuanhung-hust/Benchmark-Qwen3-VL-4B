@@ -1,0 +1,9 @@
+llama.cpp/
+models/
+results/
+benchmark_data/
+.git/
+__pycache__/
+*.pyc
+.venv/
+env/
