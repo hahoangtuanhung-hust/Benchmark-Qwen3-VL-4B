@@ -13,9 +13,6 @@ import json
 import os
 import re
 import sys
-import time
-import unicodedata
-from typing import Optional
 
 import yaml
 
@@ -112,13 +109,36 @@ def relaxed_accuracy(prediction: str, ground_truth: str, tolerance: float = 0.05
     return 0.0
 
 
+def vqa_accuracy(prediction: str, ground_truths: list[str]) -> float:
+    """VQA consensus accuracy against the other annotator answers."""
+    normalized_prediction = normalize_text(prediction)
+    normalized_answers = [normalize_text(answer) for answer in ground_truths]
+    if not normalized_answers:
+        return 0.0
+
+    per_annotator_scores = []
+    for index in range(len(normalized_answers)):
+        other_answers = normalized_answers[:index] + normalized_answers[index + 1:]
+        matches = sum(answer == normalized_prediction for answer in other_answers)
+        per_annotator_scores.append(min(1.0, matches / 3.0))
+    return sum(per_annotator_scores) / len(per_annotator_scores)
+
+
 METRIC_FUNCTIONS = {
     "exact_match_normalized": exact_match,
     "contains_match": contains_match,
     "anls": anls_score,
     "relaxed_accuracy": relaxed_accuracy,
-    "vqa_accuracy": exact_match,  # Simplified VQA accuracy
 }
+
+
+def score_prediction(metric_name: str, prediction: str, ground_truths: list[str]) -> float:
+    """Score against all accepted answers, using the dataset-specific metric."""
+    if metric_name == "vqa_accuracy":
+        return vqa_accuracy(prediction, ground_truths)
+
+    metric_fn = METRIC_FUNCTIONS.get(metric_name, exact_match)
+    return max((metric_fn(prediction, answer) for answer in ground_truths), default=0.0)
 
 
 def load_accuracy_dataset(dataset_dir: str, max_samples: int = 50) -> list[dict]:
@@ -178,9 +198,17 @@ def run_accuracy_benchmark(
         print(f"  [WARN] No samples found in {dataset_dir}")
         print(f"  [INFO] Create {dataset_dir}/questions.jsonl with format:")
         print(f'         {{"image_path": "rel/path.jpg", "question": "...", "answer": "..."}}')
-        return [], {"dataset": dataset_name, "metric_name": metric_name, "score": None, "error": "no_samples"}
-
-    metric_fn = METRIC_FUNCTIONS.get(metric_name, exact_match)
+        return [], {
+            "dataset": dataset_name,
+            "requested_precision": model_info.get("requested_precision", ""),
+            "actual_quant_type": model_info.get("actual_quant_type", ""),
+            "samples": 0,
+            "success_rate": 0.0,
+            "metric_name": metric_name,
+            "score": None,
+            "delta_vs_fp16": None,
+            "error": "no_samples",
+        }
 
     print(f"\n  Running {dataset_name}: {len(samples)} samples, metric={metric_name}")
 
@@ -191,14 +219,23 @@ def run_accuracy_benchmark(
             image_path = os.path.join(project_dir, image_path)
 
         question = sample.get("question", "")
-        ground_truth = sample.get("answer", sample.get("ground_truth", ""))
+        ground_truths = sample.get("answers") or [sample.get("answer", sample.get("ground_truth", ""))]
+        if isinstance(ground_truths, str):
+            ground_truths = [ground_truths]
+        ground_truths = [str(answer) for answer in ground_truths if str(answer).strip()]
+        ground_truth = sample.get("answer") or (ground_truths[0] if ground_truths else "")
+
+        accuracy_prompt = (
+            "Answer using only the shortest correct answer. Do not explain.\n"
+            f"Question: {question}"
+        )
 
         # Send request
         result = send_vlm_request(
             server_url=server_url,
             image_path=image_path,
-            prompt=question,
-            max_tokens=128,
+            prompt=accuracy_prompt,
+            max_tokens=64,
             temperature=0.0,
         )
 
@@ -207,7 +244,7 @@ def run_accuracy_benchmark(
 
         # Compute score
         if result.success and prediction:
-            score = metric_fn(prediction, ground_truth)
+            score = score_prediction(metric_name, prediction, ground_truths)
         else:
             score = 0.0
 
@@ -219,7 +256,7 @@ def run_accuracy_benchmark(
             "requested_precision": model_info.get("requested_precision", ""),
             "actual_quant_type": model_info.get("actual_quant_type", ""),
             "question": question[:200],
-            "ground_truth": ground_truth[:200],
+            "ground_truth": json.dumps(ground_truths, ensure_ascii=True)[:1000],
             "prediction": prediction[:200],
             "normalized_prediction": normalized_pred[:200],
             "metric_name": metric_name,
@@ -229,7 +266,7 @@ def run_accuracy_benchmark(
         predictions.append(pred_entry)
 
         # Progress
-        status = "✓" if score > 0.5 else "✗"
+        status = "OK" if score > 0.5 else "MISS"
         print(f"    [{i+1:3d}/{len(samples)}] {status} score={score:.2f} | GT='{ground_truth[:40]}' | Pred='{prediction[:40]}'")
 
     # Summary
@@ -246,6 +283,7 @@ def run_accuracy_benchmark(
         "metric_name": metric_name,
         "score": avg_score,
         "delta_vs_fp16": None,  # Computed later in summarize.py
+        "error": "",
     }
 
     print(f"  {dataset_name} Score: {avg_score:.4f} ({metric_name}), success_rate: {success_rate:.2%}")
@@ -299,7 +337,7 @@ def main():
         metric_name = ds_config.get("fallback_metric", "exact_match_normalized")
         # Try official metric if evaluator exists
         official = ds_config.get("official_metric")
-        if official and official in METRIC_FUNCTIONS:
+        if official and (official in METRIC_FUNCTIONS or official == "vqa_accuracy"):
             metric_name = official
 
         predictions, summary = run_accuracy_benchmark(
@@ -318,23 +356,40 @@ def main():
     output_dir = os.path.join(project_dir, args.output_dir)
     os.makedirs(output_dir, exist_ok=True)
 
-    # Predictions JSONL
+    # Predictions JSONL (replace this model when resuming Phase 9)
     pred_path = os.path.join(output_dir, "predictions.jsonl")
-    with open(pred_path, "a") as f:
+    retained_predictions = []
+    if os.path.exists(pred_path):
+        with open(pred_path, encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                existing = json.loads(line)
+                if existing.get("actual_quant_type") != model_info["actual_quant_type"]:
+                    retained_predictions.append(existing)
+    with open(pred_path, "w", encoding="utf-8") as f:
+        for pred in retained_predictions:
+            f.write(json.dumps(pred, ensure_ascii=True) + "\n")
         for pred in all_predictions:
-            f.write(json.dumps(pred) + "\n")
+            f.write(json.dumps(pred, ensure_ascii=True) + "\n")
     print(f"\n[INFO] Predictions saved to: {pred_path}")
 
-    # Summary CSV
+    # Summary CSV (upsert by model and dataset so --phase 9 is repeatable)
     summary_path = os.path.join(output_dir, "summary.csv")
-    if all_summaries:
-        file_exists = os.path.exists(summary_path)
-        mode = "a" if file_exists else "w"
-        with open(summary_path, mode, newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=all_summaries[0].keys())
-            if not file_exists:
-                writer.writeheader()
-            writer.writerows(all_summaries)
+    summary_fields = [
+        "dataset", "requested_precision", "actual_quant_type", "samples",
+        "success_rate", "metric_name", "score", "delta_vs_fp16", "error",
+    ]
+    retained_summaries = []
+    if os.path.exists(summary_path):
+        with open(summary_path, newline="", encoding="utf-8") as f:
+            for existing in csv.DictReader(f):
+                if existing.get("actual_quant_type") != model_info["actual_quant_type"]:
+                    retained_summaries.append(existing)
+    with open(summary_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=summary_fields)
+        writer.writeheader()
+        writer.writerows(retained_summaries + all_summaries)
     print(f"[INFO] Summary saved to: {summary_path}")
 
     print("\n[SUCCESS] Accuracy benchmark complete.")

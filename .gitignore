@@ -17,6 +17,8 @@ venv/
 # Project specific
 models/
 results/
+results_backup_*/
+failed_run_*/
 benchmark_data/
 *.zip
 *.log

@@ -11,11 +11,28 @@ import os
 import zipfile
 import argparse
 import sys
+import shutil
+from datetime import datetime, timezone
 
 # Setup paths
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_DIR = os.path.dirname(SCRIPT_DIR)
 REQUIREMENTS_PATH = os.path.join(PROJECT_DIR, "requirements.txt")
+RUN_ARTIFACTS = (
+    "accuracy",
+    "charts",
+    "compatibility",
+    "environment",
+    "gpu",
+    "logs",
+    "raw",
+    "report",
+    "server_metrics",
+    "compatibility_matrix.csv",
+    "config_snapshot.yaml",
+    "model_manifest.csv",
+    "validation_report.json",
+)
 
 # Define the Modal App
 app = modal.App("qwen3-vl-benchmark")
@@ -39,21 +56,35 @@ image = (
     .add_local_dir(
         PROJECT_DIR, 
         remote_path="/benchmark",
-        ignore=["llama.cpp/**", "models/**", "results/**", "benchmark_data/**", ".git/**", "__pycache__/**", "*.pyc"]
+        ignore=[
+            "llama.cpp/**",
+            "models/**",
+            "results/**",
+            # This path is supplied by accuracy_volume below. It must not
+            # contain image files before Modal mounts the volume.
+            "benchmark_data/accuracy/**",
+            ".git/**",
+            "__pycache__/**",
+            "*.pyc",
+        ]
     )
 )
 
 # Create a persistent volume for the models directory to avoid re-downloading/converting
 models_volume = modal.Volume.from_name("qwen3-vl-benchmark-models", create_if_missing=True)
+accuracy_volume = modal.Volume.from_name("qwen3-vl-benchmark-accuracy", create_if_missing=True)
 
 @app.function(
     image=image,
     gpu="T4",           # You can change this to "A10G" or "A100" if you need more power/VRAM
-    volumes={"/benchmark/models": models_volume},
+    volumes={
+        "/benchmark/models": models_volume,
+        "/benchmark/benchmark_data/accuracy": accuracy_volume,
+    },
     timeout=86400,      # Allow up to 24 hours
     cpu=8.0             # Request 8 CPU cores for fast quantization
 )
-def run_benchmark_remote(smoke: bool = False, model_name: str = ""):
+def run_benchmark_remote(smoke: bool = False, model_name: str = "", phase: int = 0):
     """This function executes INSIDE the Modal cloud container."""
     os.chdir("/benchmark")
     
@@ -71,6 +102,8 @@ def run_benchmark_remote(smoke: bool = False, model_name: str = ""):
         cmd.append("--smoke")
     if model_name:
         cmd.extend(["--model", model_name])
+    if phase > 0:
+        cmd.extend(["--phase", str(phase)])
         
     print(f"[INFO] Executing: {' '.join(cmd)}")
     
@@ -78,33 +111,120 @@ def run_benchmark_remote(smoke: bool = False, model_name: str = ""):
     env = os.environ.copy()
     env["LLAMA_CPP_DIR"] = "/opt/llama.cpp"
     
+    benchmark_exit_code = 0
     try:
         # Run the benchmark. Output streams directly to your local terminal.
         subprocess.run(cmd, check=True, env=env)
     except subprocess.CalledProcessError as e:
+        benchmark_exit_code = e.returncode
         print(f"[ERROR] Benchmark failed with exit code {e.returncode}")
         # We still want to return whatever results were generated before failing
     
     # Commit the volume to persist any downloaded/converted models for next run
     models_volume.commit()
+    accuracy_volume.commit()
     
     # Zip the results directory
     print("[INFO] Zipping results for download...")
     if os.path.exists("results"):
+        run_id = ""
+        latest_run_path = os.path.join("results", "latest_run.txt")
+        if os.path.exists(latest_run_path):
+            with open(latest_run_path, encoding="utf-8") as f:
+                run_id = f.read().strip()
         subprocess.run(["zip", "-r", "results.zip", "results/"], check=True)
         with open("results.zip", "rb") as f:
-            return f.read()
+            return f.read(), benchmark_exit_code, run_id
     else:
         print("[WARN] No results directory found.")
+        return None, benchmark_exit_code or 1, ""
+
+
+def _unique_legacy_run_dir(results_root: str) -> str:
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    base = os.path.join(results_root, f"run_{timestamp}_legacy_local")
+    candidate = base
+    suffix = 1
+    while os.path.exists(candidate):
+        candidate = f"{base}_{suffix}"
+        suffix += 1
+    return candidate
+
+
+def _archive_legacy_results(results_root: str) -> str | None:
+    """Move results from the old flat layout into a preserved run folder."""
+    existing = [name for name in RUN_ARTIFACTS if os.path.exists(os.path.join(results_root, name))]
+    if not existing:
         return None
+
+    legacy_dir = _unique_legacy_run_dir(results_root)
+    os.makedirs(legacy_dir, exist_ok=True)
+    for name in existing:
+        shutil.move(os.path.join(results_root, name), os.path.join(legacy_dir, name))
+    with open(os.path.join(legacy_dir, "run_metadata.txt"), "w", encoding="utf-8") as f:
+        f.write("status=legacy\nsource=pre_run_directory_layout\n")
+    print(f"[INFO] Previous flat results preserved in {legacy_dir}")
+    return legacy_dir
+
+
+def _find_previous_performance_run(results_root: str, current_run_dir: str) -> str | None:
+    candidates = []
+    current_run_dir = os.path.abspath(current_run_dir)
+    if not os.path.isdir(results_root):
+        return None
+    for name in os.listdir(results_root):
+        candidate = os.path.abspath(os.path.join(results_root, name))
+        if (
+            name.startswith("run_")
+            and candidate != current_run_dir
+            and os.path.isfile(os.path.join(candidate, "raw", "requests.csv"))
+        ):
+            candidates.append(candidate)
+    if not candidates:
+        return None
+
+    # A legacy folder is timestamped when it is archived locally, which can be
+    # later than the remote run that just produced fresher performance data.
+    regular_runs = [path for path in candidates if "_legacy" not in os.path.basename(path)]
+    return max(regular_runs or candidates, key=os.path.basename)
+
+
+def _copy_missing(source: str, destination: str) -> None:
+    if os.path.isdir(source):
+        for source_root, _, filenames in os.walk(source):
+            relative_root = os.path.relpath(source_root, source)
+            destination_root = destination if relative_root == "." else os.path.join(destination, relative_root)
+            os.makedirs(destination_root, exist_ok=True)
+            for filename in filenames:
+                destination_file = os.path.join(destination_root, filename)
+                if not os.path.exists(destination_file):
+                    shutil.copy2(os.path.join(source_root, filename), destination_file)
+    elif os.path.isfile(source) and not os.path.exists(destination):
+        os.makedirs(os.path.dirname(destination), exist_ok=True)
+        shutil.copy2(source, destination)
+
+
+def _hydrate_accuracy_resume(results_root: str, current_run_dir: str) -> str | None:
+    """Add missing performance artifacts to a phase 9+ result run."""
+    previous_run = _find_previous_performance_run(results_root, current_run_dir)
+    if not previous_run:
+        return None
+    for name in RUN_ARTIFACTS:
+        _copy_missing(
+            os.path.join(previous_run, name),
+            os.path.join(current_run_dir, name),
+        )
+    return previous_run
 
 
 @app.local_entrypoint()
-def main(smoke: bool = False, model_name: str = ""):
+def main(smoke: bool = False, model_name: str = "", phase: int = 0):
     """This function executes LOCALLY on your machine."""
-    print(f"Deploying Benchmark to Modal (Smoke Mode: {smoke}, Model: {model_name or 'ALL'})...")
+    print(f"Deploying Benchmark to Modal (Smoke Mode: {smoke}, Model: {model_name or 'ALL'}, Phase: {phase})...")
     
-    zip_bytes = run_benchmark_remote.remote(smoke=smoke, model_name=model_name)
+    zip_bytes, benchmark_exit_code, run_id = run_benchmark_remote.remote(
+        smoke=smoke, model_name=model_name, phase=phase
+    )
     
     if zip_bytes:
         zip_path = os.path.join(PROJECT_DIR, "results_from_modal.zip")
@@ -112,12 +232,51 @@ def main(smoke: bool = False, model_name: str = ""):
             f.write(zip_bytes)
             
         print(f"\n[SUCCESS] Results downloaded successfully to {zip_path}")
-        print("[INFO] Extracting results...")
-        
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            # Note: this extracts into PROJECT_DIR/results because the zip contains the 'results' folder
+        local_results = os.path.join(PROJECT_DIR, "results")
+        os.makedirs(local_results, exist_ok=True)
+        _archive_legacy_results(local_results)
+
+        print("[INFO] Extracting run results...")
+        with zipfile.ZipFile(zip_path, "r") as zip_ref:
+            # The archive contains results/<run_id> and results/latest_run.txt.
             zip_ref.extractall(PROJECT_DIR)
-            
-        print("[SUCCESS] Extraction complete! Check the 'results/' folder for your reports and charts.")
+
+        current_run_dir = os.path.join(local_results, run_id) if run_id else ""
+        if not current_run_dir or not os.path.isdir(current_run_dir):
+            print("[ERROR] Downloaded archive did not identify a valid run directory.")
+            raise SystemExit(benchmark_exit_code or 1)
+
+        # A Phase 9 resume returns accuracy artifacts but no remote performance
+        # data. Merge them with the existing local performance run and rebuild
+        # the report automatically.
+        if phase >= 9:
+            previous_run = _hydrate_accuracy_resume(local_results, current_run_dir)
+            if previous_run:
+                print(f"[INFO] Added performance artifacts from {previous_run}")
+            local_raw_results = os.path.join(current_run_dir, "raw", "requests.csv")
+            if os.path.exists(local_raw_results):
+                print("[INFO] Rebuilding this run's report with accuracy and performance results...")
+                subprocess.run(
+                    [
+                        sys.executable,
+                        os.path.join(SCRIPT_DIR, "summarize.py"),
+                        "--project-dir",
+                        PROJECT_DIR,
+                        "--results-dir",
+                        current_run_dir,
+                    ],
+                    check=True,
+                )
+
+        if benchmark_exit_code:
+            print(f"[WARN] Remote benchmark failed; partial artifacts are in {current_run_dir}")
+        else:
+            print(f"[SUCCESS] Run results: {current_run_dir}")
+            report_path = os.path.join(current_run_dir, "report", "benchmark_summary.md")
+            if os.path.exists(report_path):
+                print(f"[SUCCESS] Report: {report_path}")
     else:
         print("\n[ERROR] No results were returned from Modal.")
+
+    if benchmark_exit_code:
+        raise SystemExit(benchmark_exit_code)

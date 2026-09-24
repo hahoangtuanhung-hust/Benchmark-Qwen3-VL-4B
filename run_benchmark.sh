@@ -41,6 +41,86 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Child scripts write to results/ while the benchmark is running. At the end of
+# every invocation these staging artifacts are moved into one immutable run dir.
+RUN_ARTIFACTS=(
+    accuracy charts compatibility environment gpu logs raw report server_metrics
+    compatibility_matrix.csv config_snapshot.yaml model_manifest.csv validation_report.json
+)
+RUN_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+RUN_TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+RUN_MODE="full"
+if [ "$SMOKE_MODE" = true ]; then
+    RUN_MODE="smoke"
+fi
+RUN_MODEL="${SINGLE_MODEL:-all}"
+RUN_MODEL="$(printf '%s' "$RUN_MODEL" | sed 's/[^A-Za-z0-9_.-]/_/g')"
+RUN_ID="${RUN_ID:-run_${RUN_TIMESTAMP}_${RUN_MODE}_${RUN_MODEL}_${RANDOM}}"
+RUN_ID="$(printf '%s' "$RUN_ID" | sed 's/[^A-Za-z0-9_.-]/_/g')"
+RUN_DIR="$RESULTS_DIR/$RUN_ID"
+RUN_FINALIZED=false
+
+mkdir -p "$RESULTS_DIR"
+while [ -e "$RUN_DIR" ]; do
+    RUN_ID="run_${RUN_TIMESTAMP}_${RUN_MODE}_${RUN_MODEL}_${RANDOM}"
+    RUN_DIR="$RESULTS_DIR/$RUN_ID"
+done
+
+has_staging_results() {
+    local item
+    for item in "${RUN_ARTIFACTS[@]}"; do
+        if [ -e "$RESULTS_DIR/$item" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+move_staging_results() {
+    local destination="$1"
+    local item
+    mkdir -p "$destination"
+    for item in "${RUN_ARTIFACTS[@]}"; do
+        if [ -e "$RESULTS_DIR/$item" ]; then
+            mv "$RESULTS_DIR/$item" "$destination/"
+        fi
+    done
+}
+
+# Preserve results created by older versions that wrote directly under results/.
+if has_staging_results; then
+    LEGACY_RUN_DIR="$RESULTS_DIR/run_${RUN_TIMESTAMP}_legacy_${RANDOM}"
+    echo "[INFO] Moving legacy top-level results to $LEGACY_RUN_DIR..."
+    move_staging_results "$LEGACY_RUN_DIR"
+fi
+
+# A resumed local run starts from the most recently completed run. Modal resumes
+# are combined with their previous local run after the new artifacts download.
+if [ "$START_PHASE" -gt 0 ]; then
+    RESUME_RUN_DIR=""
+    if [ -f "$RESULTS_DIR/latest_run.txt" ]; then
+        RESUME_RUN_ID="$(tr -d '\r\n' < "$RESULTS_DIR/latest_run.txt")"
+        if [ -d "$RESULTS_DIR/$RESUME_RUN_ID" ]; then
+            RESUME_RUN_DIR="$RESULTS_DIR/$RESUME_RUN_ID"
+        fi
+    fi
+    if [ -z "$RESUME_RUN_DIR" ]; then
+        for candidate in "$RESULTS_DIR"/run_*; do
+            if [ -d "$candidate" ]; then
+                RESUME_RUN_DIR="$candidate"
+            fi
+        done
+    fi
+    if [ -n "$RESUME_RUN_DIR" ]; then
+        echo "[INFO] Resuming from artifacts in $RESUME_RUN_DIR..."
+        for item in "${RUN_ARTIFACTS[@]}"; do
+            if [ -e "$RESUME_RUN_DIR/$item" ]; then
+                cp -a "$RESUME_RUN_DIR/$item" "$RESULTS_DIR/"
+            fi
+        done
+    fi
+fi
+
 # --- Utility functions ---
 log_phase() {
     echo ""
@@ -75,9 +155,38 @@ stop_gpu_monitor() {
     fi
 }
 
+finalize_run() {
+    local exit_code="${1:-0}"
+    local run_status="success"
+    if [ "$RUN_FINALIZED" = true ]; then
+        return
+    fi
+    if [ "$exit_code" -ne 0 ]; then
+        run_status="failed"
+    fi
+
+    move_staging_results "$RUN_DIR"
+    cat > "$RUN_DIR/run_metadata.txt" <<EOF
+run_id=$RUN_ID
+started_at=$RUN_STARTED_AT
+finished_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+status=$run_status
+exit_code=$exit_code
+mode=$RUN_MODE
+model=${SINGLE_MODEL:-all}
+start_phase=$START_PHASE
+EOF
+    printf '%s\n' "$RUN_ID" > "$RESULTS_DIR/latest_run.txt"
+    RUN_FINALIZED=true
+    echo "[INFO] Run artifacts saved to $RUN_DIR"
+}
+
 cleanup() {
+    local exit_code=$?
+    set +e
     stop_gpu_monitor
     bash scripts/stop_server.sh 2>/dev/null || true
+    finalize_run "$exit_code"
 }
 trap cleanup EXIT
 
@@ -348,6 +457,16 @@ if [ "$START_PHASE" -le 9 ]; then
     MMPROJ=$(find_mmproj)
     MODEL_FILES=($(detect_models))
 
+    ACCURACY_SAMPLES=200
+    if [ "$SMOKE_MODE" = true ]; then
+        ACCURACY_SAMPLES=50
+    fi
+    echo "[INFO] Preparing $ACCURACY_SAMPLES samples for each accuracy dataset..."
+    python3 scripts/download_accuracy_datasets.py \
+        --project-dir . \
+        --samples "$ACCURACY_SAMPLES"
+    check_success "download_accuracy_datasets" 9
+
     # GPU must be idle before accuracy (§34)
     echo "[INFO] Ensuring GPU is idle before accuracy suite..."
     sleep 5
@@ -370,7 +489,7 @@ if [ "$START_PHASE" -le 9 ]; then
             continue
         fi
 
-        ACCURACY_MODE="quick"
+        ACCURACY_MODE="full"
         if [ "$SMOKE_MODE" = true ]; then
             ACCURACY_MODE="quick"
         fi
@@ -400,15 +519,17 @@ fi
 if [ "$START_PHASE" -le 11 ]; then
     log_phase 11 "Generate Report & Charts"
     python3 scripts/summarize.py --project-dir .
+    finalize_run 0
 
     echo ""
     echo "============================================="
     echo " BENCHMARK COMPLETE"
     echo "============================================="
-    echo "  Results directory: $RESULTS_DIR/"
-    echo "  Report: $RESULTS_DIR/report/benchmark_summary.md"
-    echo "  Summary CSV: $RESULTS_DIR/report/summary.csv"
-    echo "  Charts: $RESULTS_DIR/charts/"
-    echo "  Raw data: $RESULTS_DIR/raw/"
+    echo "  Run ID: $RUN_ID"
+    echo "  Results directory: $RUN_DIR/"
+    echo "  Report: $RUN_DIR/report/benchmark_summary.md"
+    echo "  Summary CSV: $RUN_DIR/report/summary.csv"
+    echo "  Charts: $RUN_DIR/charts/"
+    echo "  Raw data: $RUN_DIR/raw/"
     echo "============================================="
 fi

@@ -14,6 +14,7 @@ import argparse
 import csv
 import json
 import os
+import re
 import sys
 from collections import defaultdict
 
@@ -123,6 +124,110 @@ def compute_statistics(df: pd.DataFrame) -> list[dict]:
     return summaries
 
 
+def add_gpu_statistics(summaries: list[dict], results_dir: str) -> None:
+    """Read gpu_monitor logs and inject peak VRAM and GPU util into summaries."""
+    gpu_dir = os.path.join(results_dir, "gpu")
+    if not os.path.exists(gpu_dir):
+        return
+
+    for summary in summaries:
+        model = summary.get("actual_quant_type", "") or summary.get("model_name", "")
+        ccu = summary.get("ccu", 1)
+        if not model:
+            continue
+
+        matching_files = sorted(
+            f for f in os.listdir(gpu_dir)
+            if f.startswith(f"gpu_{model}_ccu{ccu}_") and f.endswith(".csv")
+        )
+        if not matching_files:
+            continue
+
+        # Filenames end in YYYYmmdd_HHMMSS, so lexical order selects the
+        # current run and prevents stale local extractions from contaminating it.
+        gpu_log = matching_files[-1]
+        try:
+            gpu_df = pd.read_csv(os.path.join(gpu_dir, gpu_log))
+        except Exception as exc:
+            print(f"  [WARN] Could not load GPU log {gpu_log}: {exc}")
+            continue
+
+        if not gpu_df.empty and "memory_used_mb" in gpu_df.columns:
+            summary["peak_vram_mb_max"] = float(gpu_df["memory_used_mb"].max())
+            summary["idle_vram_mb_mean"] = float(gpu_df["memory_used_mb"].min())
+        if not gpu_df.empty and "gpu_util_pct" in gpu_df.columns:
+            summary["gpu_util_mean_pct_avg"] = float(gpu_df["gpu_util_pct"].mean())
+            summary["gpu_util_peak_pct_max"] = float(gpu_df["gpu_util_pct"].max())
+
+
+def add_accuracy_statistics(summaries: list[dict], results_dir: str) -> None:
+    """Inject per-dataset accuracy scores into every summary row for a model."""
+    accuracy_path = os.path.join(results_dir, "accuracy", "summary.csv")
+    if not os.path.exists(accuracy_path):
+        return
+
+    try:
+        accuracy_df = pd.read_csv(accuracy_path)
+    except Exception as exc:
+        print(f"  [WARN] Could not load accuracy summary: {exc}")
+        return
+
+    required = {"dataset", "actual_quant_type", "score"}
+    if accuracy_df.empty or not required.issubset(accuracy_df.columns):
+        return
+
+    accuracy_df["score"] = pd.to_numeric(accuracy_df["score"], errors="coerce")
+    accuracy_df = accuracy_df.dropna(subset=["actual_quant_type", "dataset", "score"])
+    if "error" in accuracy_df.columns:
+        accuracy_df = accuracy_df[accuracy_df["error"].fillna("").eq("")]
+    accuracy_df = accuracy_df.drop_duplicates(
+        subset=["actual_quant_type", "dataset"], keep="last"
+    )
+
+    scores_by_model = defaultdict(dict)
+    for _, row in accuracy_df.iterrows():
+        model = str(row["actual_quant_type"])
+        dataset_key = re.sub(r"[^a-z0-9]+", "", str(row["dataset"]).lower())
+        scores_by_model[model][dataset_key] = float(row["score"])
+
+    fp16_mean = None
+    for model, scores in scores_by_model.items():
+        if model in ("F16", "FP16") and scores:
+            fp16_mean = float(np.mean(list(scores.values())))
+            break
+
+    for summary in summaries:
+        model = summary.get("actual_quant_type", "") or summary.get("requested_precision", "")
+        scores = scores_by_model.get(model, {})
+        for dataset_key, score in scores.items():
+            summary[f"accuracy_{dataset_key}_score"] = score
+        if scores:
+            accuracy_mean = float(np.mean(list(scores.values())))
+            summary["accuracy_mean"] = accuracy_mean
+            if fp16_mean is not None:
+                summary["accuracy_loss_vs_fp16"] = fp16_mean - accuracy_mean
+
+
+def format_metric(value, decimals: int = 1, suffix: str = "") -> str:
+    """Format a report cell while handling missing and numpy values."""
+    try:
+        if value is None or pd.isna(value):
+            return "N/A"
+        return f"{float(value):.{decimals}f}{suffix}"
+    except (TypeError, ValueError):
+        return "N/A"
+
+
+def format_score(value) -> str:
+    """Format a 0..1 accuracy score as a percentage."""
+    try:
+        if value is None or pd.isna(value):
+            return "N/A"
+        return f"{float(value) * 100:.2f}%"
+    except (TypeError, ValueError):
+        return "N/A"
+
+
 def compute_derived_metrics(summaries: list[dict]) -> list[dict]:
     """
     Compute derived metrics (§26).
@@ -162,7 +267,7 @@ def compute_derived_metrics(summaries: list[dict]) -> list[dict]:
     # Find CCU1 counterparts
     ccu1_data = {}
     for s in summaries:
-        if s.get("ccu") == 1:
+        if s.get("ccu") == 1 and s.get("scenario") == "S2":
             key = s.get("actual_quant_type", "") or s.get("requested_precision", "")
             ccu1_data[key] = s
 
@@ -360,7 +465,7 @@ def generate_markdown_report(summaries: list[dict], output_dir: str, project_dir
     report_path = os.path.join(report_dir, "benchmark_summary.md")
 
     # Load compatibility matrix
-    compat_path = os.path.join(project_dir, "results/compatibility_matrix.csv")
+    compat_path = os.path.join(output_dir, "compatibility_matrix.csv")
     compat_rows = []
     if os.path.exists(compat_path):
         with open(compat_path) as f:
@@ -386,27 +491,30 @@ def generate_markdown_report(summaries: list[dict], output_dir: str, project_dir
         lines.append("*No compatibility matrix found.*")
     lines.append("")
 
-    # Performance table — CCU1 S2 (§35)
+    # Performance table - CCU1 S2 (§35)
     s2_ccu1 = [s for s in summaries if s.get("scenario") == "S2" and s.get("ccu") == 1]
     if s2_ccu1:
-        lines.append("## Performance — CCU1 Normal (S2)")
+        lines.append("## Performance - CCU1 Normal (S2)")
         lines.append("")
-        lines.append("| Variant | TTFT P50 | TTFT P95 | TTFV P50 | E2E P50 | Prefill TPS | Decode TPS | ITL P50 | ITL P95 | Peak VRAM |")
-        lines.append("|---------|----------|----------|----------|---------|-------------|------------|---------|---------|-----------|")
+        lines.append("| Variant | TTFT P50 | TTFT P95 | TTFV P50 | E2E P50 | Prefill TPS | Decode TPS | ITL P50 | ITL P95 | Peak VRAM | GPU Avg | GPU Peak |")
+        lines.append("|---------|----------|----------|----------|---------|-------------|------------|---------|---------|-----------|---------|----------|")
         for s in s2_ccu1:
             quant = s.get("actual_quant_type", "?")
-            lines.append(
-                f"| {quant} "
-                f"| {s.get('ttft_ms_p50', 'N/A'):.0f}ms " if isinstance(s.get('ttft_ms_p50'), (int, float)) else f"| N/A "
-                f"| {s.get('ttft_ms_p95', 'N/A'):.0f}ms " if isinstance(s.get('ttft_ms_p95'), (int, float)) else f"| N/A "
-                f"| {s.get('ttfv_ms_p50', 'N/A'):.0f}ms " if isinstance(s.get('ttfv_ms_p50'), (int, float)) else f"| N/A "
-                f"| {s.get('e2e_ms_p50', 'N/A'):.0f}ms " if isinstance(s.get('e2e_ms_p50'), (int, float)) else f"| N/A "
-                f"| {s.get('prefill_tps_mean', 'N/A'):.1f} " if isinstance(s.get('prefill_tps_mean'), (int, float)) else f"| N/A "
-                f"| {s.get('decode_tps_mean', 'N/A'):.1f} " if isinstance(s.get('decode_tps_mean'), (int, float)) else f"| N/A "
-                f"| {s.get('itl_p50_ms_avg', 'N/A'):.1f}ms " if isinstance(s.get('itl_p50_ms_avg'), (int, float)) else f"| N/A "
-                f"| {s.get('itl_p95_ms_avg', 'N/A'):.1f}ms " if isinstance(s.get('itl_p95_ms_avg'), (int, float)) else f"| N/A "
-                f"| {s.get('peak_vram_mb_max', 'N/A'):.0f}MB |" if isinstance(s.get('peak_vram_mb_max'), (int, float)) else f"| N/A |"
-            )
+            cells = [
+                quant,
+                format_metric(s.get("ttft_ms_p50"), 0, "ms"),
+                format_metric(s.get("ttft_ms_p95"), 0, "ms"),
+                format_metric(s.get("ttfv_ms_p50"), 0, "ms"),
+                format_metric(s.get("e2e_ms_p50"), 0, "ms"),
+                format_metric(s.get("prefill_tps_mean"), 1),
+                format_metric(s.get("decode_tps_mean"), 1),
+                format_metric(s.get("itl_p50_ms_avg"), 1, "ms"),
+                format_metric(s.get("itl_p95_ms_avg"), 1, "ms"),
+                format_metric(s.get("peak_vram_mb_max"), 0, "MB"),
+                format_metric(s.get("gpu_util_mean_pct_avg"), 1, "%"),
+                format_metric(s.get("gpu_util_peak_pct_max"), 1, "%"),
+            ]
+            lines.append("| " + " | ".join(cells) + " |")
         lines.append("")
 
     # CCU comparison table (§35)
@@ -425,17 +533,39 @@ def generate_markdown_report(summaries: list[dict], output_dir: str, project_dir
             slowdown = c2.get("ccu2_ttft_slowdown")
             tps_loss = c2.get("ccu2_tps_loss_pct")
             agg_tps = c2.get("ccu2_aggregate_tps")
-            lines.append(
-                f"| {q} "
-                f"| {ccu1_tps:.1f} " if ccu1_tps else "| N/A "
-                f"| {ccu2_tps:.1f} " if ccu2_tps else "| N/A "
-                f"| {agg_tps:.1f} " if agg_tps else "| N/A "
-                f"| {s.get('ttft_ms_p50', 'N/A'):.0f}ms " if isinstance(s.get('ttft_ms_p50'), (int, float)) else "| N/A "
-                f"| {c2.get('ttft_ms_p50', 'N/A'):.0f}ms " if isinstance(c2.get('ttft_ms_p50'), (int, float)) else "| N/A "
-                f"| {slowdown:.2f}x " if slowdown else "| N/A "
-                f"| {tps_loss:.1f}% |" if tps_loss else "| N/A |"
-            )
+            cells = [
+                q,
+                format_metric(ccu1_tps, 1),
+                format_metric(ccu2_tps, 1),
+                format_metric(agg_tps, 1),
+                format_metric(s.get("ttft_ms_p50"), 0, "ms"),
+                format_metric(c2.get("ttft_ms_p50"), 0, "ms"),
+                format_metric(slowdown, 2, "x"),
+                format_metric(tps_loss, 1, "%"),
+            ]
+            lines.append("| " + " | ".join(cells) + " |")
         lines.append("")
+
+    # Accuracy table
+    lines.append("## Accuracy")
+    lines.append("")
+    accuracy_rows = [s for s in s2_ccu1 if s.get("accuracy_mean") is not None]
+    if accuracy_rows:
+        lines.append("| Variant | TextVQA | DocVQA | ChartQA | Mean | Loss vs FP16 |")
+        lines.append("|---------|---------|--------|---------|------|--------------|")
+        for s in accuracy_rows:
+            cells = [
+                str(s.get("actual_quant_type", "?")),
+                format_score(s.get("accuracy_textvqa_score")),
+                format_score(s.get("accuracy_docvqa_score")),
+                format_score(s.get("accuracy_chartqa_score")),
+                format_score(s.get("accuracy_mean")),
+                format_score(s.get("accuracy_loss_vs_fp16")),
+            ]
+            lines.append("| " + " | ".join(cells) + " |")
+    else:
+        lines.append("*No valid accuracy samples were evaluated.*")
+    lines.append("")
 
     # Derived metrics
     lines.append("## Derived Metrics")
@@ -484,6 +614,14 @@ def main():
     summaries = compute_statistics(df)
     print(f"[INFO] Generated {len(summaries)} summary entries")
 
+    # Add GPU statistics
+    print("[INFO] Adding GPU statistics...")
+    add_gpu_statistics(summaries, results_dir)
+
+    # Add accuracy scores
+    print("[INFO] Adding accuracy statistics...")
+    add_accuracy_statistics(summaries, results_dir)
+
     # Compute derived metrics
     print("[INFO] Computing derived metrics...")
     summaries = compute_derived_metrics(summaries)
@@ -504,7 +642,7 @@ def main():
         print(f"[INFO] Summary CSV: {summary_csv_path}")
 
     # Copy compatibility matrix to report
-    compat_src = os.path.join(project_dir, "results/compatibility_matrix.csv")
+    compat_src = os.path.join(results_dir, "compatibility_matrix.csv")
     compat_dst = os.path.join(results_dir, "report", "compatibility_matrix.csv")
     if os.path.exists(compat_src):
         import shutil
@@ -533,7 +671,7 @@ def main():
         vram_str = f"{vram:.0f}MB" if isinstance(vram, (int, float)) else "N/A"
         print(f"  {q:<12} Decode TPS={tps_str:<8} TTFT P50={ttft_str:<10} Peak VRAM={vram_str}")
 
-    print(f"\n[SUCCESS] Summary complete. See results/report/")
+    print(f"\n[SUCCESS] Summary complete. See {os.path.join(results_dir, 'report')}/")
 
 
 if __name__ == "__main__":
