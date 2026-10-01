@@ -491,64 +491,75 @@ def generate_markdown_report(summaries: list[dict], output_dir: str, project_dir
         lines.append("*No compatibility matrix found.*")
     lines.append("")
 
-    # Performance table - CCU1 S2 (§35)
-    s2_ccu1 = [s for s in summaries if s.get("scenario") == "S2" and s.get("ccu") == 1]
-    if s2_ccu1:
-        lines.append("## Performance - CCU1 Normal (S2)")
-        lines.append("")
-        lines.append("| Variant | TTFT P50 | TTFT P95 | TTFV P50 | E2E P50 | Prefill TPS | Decode TPS | ITL P50 | ITL P95 | Peak VRAM | GPU Avg | GPU Peak |")
-        lines.append("|---------|----------|----------|----------|---------|-------------|------------|---------|---------|-----------|---------|----------|")
-        for s in s2_ccu1:
-            quant = s.get("actual_quant_type", "?")
-            cells = [
-                quant,
-                format_metric(s.get("ttft_ms_p50"), 0, "ms"),
-                format_metric(s.get("ttft_ms_p95"), 0, "ms"),
-                format_metric(s.get("ttfv_ms_p50"), 0, "ms"),
-                format_metric(s.get("e2e_ms_p50"), 0, "ms"),
-                format_metric(s.get("prefill_tps_mean"), 1),
-                format_metric(s.get("decode_tps_mean"), 1),
-                format_metric(s.get("itl_p50_ms_avg"), 1, "ms"),
-                format_metric(s.get("itl_p95_ms_avg"), 1, "ms"),
-                format_metric(s.get("peak_vram_mb_max"), 0, "MB"),
-                format_metric(s.get("gpu_util_mean_pct_avg"), 1, "%"),
-                format_metric(s.get("gpu_util_peak_pct_max"), 1, "%"),
-            ]
-            lines.append("| " + " | ".join(cells) + " |")
-        lines.append("")
-
-    # CCU comparison table (§35)
-    s4_ccu2 = [s for s in summaries if s.get("scenario") == "S4" and s.get("ccu") == 2]
-    if s2_ccu1 and s4_ccu2:
-        lines.append("## CCU1 vs CCU2 Comparison")
-        lines.append("")
-        lines.append("| Variant | CCU1 TPS | CCU2 TPS/user | CCU2 Agg TPS | CCU1 TTFT P50 | CCU2 TTFT P50 | TTFT Slowdown | TPS Loss/user |")
-        lines.append("|---------|----------|---------------|--------------|---------------|---------------|---------------|---------------|")
-        ccu2_by_quant = {s.get("actual_quant_type", "?"): s for s in s4_ccu2}
-        for s in s2_ccu1:
-            q = s.get("actual_quant_type", "?")
-            c2 = ccu2_by_quant.get(q, {})
-            ccu1_tps = s.get("decode_tps_mean")
-            ccu2_tps = c2.get("decode_tps_mean")
-            slowdown = c2.get("ccu2_ttft_slowdown")
-            tps_loss = c2.get("ccu2_tps_loss_pct")
-            agg_tps = c2.get("ccu2_aggregate_tps")
-            cells = [
-                q,
-                format_metric(ccu1_tps, 1),
-                format_metric(ccu2_tps, 1),
-                format_metric(agg_tps, 1),
-                format_metric(s.get("ttft_ms_p50"), 0, "ms"),
-                format_metric(c2.get("ttft_ms_p50"), 0, "ms"),
-                format_metric(slowdown, 2, "x"),
-                format_metric(tps_loss, 1, "%"),
-            ]
-            lines.append("| " + " | ".join(cells) + " |")
-        lines.append("")
+    # Detailed Performance Table (Sync with TensorRT-Edge-LLM)
+    lines.append("## Detailed performance by precision, scenario and concurrency")
+    lines.append("")
+    headers = [
+        "Precision", "Quant recipe", "Scenario", "CCU", "Runs", "Output tokens mean",
+        "TTFT mean", "TTFT P50", "TTFT P95", "TTFT P99", "TTFV mean", "TTFV P50", "TTFV P95", "TTFV P99",
+        "E2E mean", "E2E P50", "E2E P95", "E2E P99", "Prefill TPS mean", "Prefill TPS median",
+        "Prefill TPS std", "Decode TPS mean", "Decode TPS median", "Decode TPS std", "TPOT",
+        "ITL mean", "ITL P50", "ITL P95", "ITL P99", "Idle VRAM", "Peak VRAM", "KV Cache",
+        "GPU util mean", "GPU util peak",
+    ]
+    lines.append("| " + " | ".join(headers) + " |")
+    lines.append("|" + "|".join(["---"] * len(headers)) + "|")
+    
+    # Sort summaries by requested precision, scenario, and CCU
+    sorted_summaries = sorted(summaries, key=lambda x: (x.get("requested_precision", ""), x.get("scenario", ""), x.get("ccu", 1)))
+    for s in sorted_summaries:
+        quant = s.get("actual_quant_type", "?")
+        precision = s.get("requested_precision", quant)
+        
+        # Calculate TPOT if possible (1000 / Decode TPS)
+        tpot = "N/A"
+        decode_mean = s.get("decode_tps_mean")
+        if decode_mean and decode_mean > 0:
+            tpot = f"{1000.0 / decode_mean:.2f}"
+            
+        cells = [
+            precision,
+            quant,
+            s.get("scenario", "?"),
+            str(s.get("ccu", 1)),
+            str(s.get("runs", 0)),
+            format_metric(s.get("output_tokens_mean"), 2, ""),
+            format_metric(s.get("ttft_ms_mean"), 2, ""),
+            format_metric(s.get("ttft_ms_p50"), 2, ""),
+            format_metric(s.get("ttft_ms_p95"), 2, ""),
+            format_metric(s.get("ttft_ms_p99"), 2, ""),
+            format_metric(s.get("ttfv_ms_mean"), 2, ""),
+            format_metric(s.get("ttfv_ms_p50"), 2, ""),
+            format_metric(s.get("ttfv_ms_p95"), 2, ""),
+            format_metric(s.get("ttfv_ms_p99"), 2, ""),
+            format_metric(s.get("e2e_ms_mean"), 2, ""),
+            format_metric(s.get("e2e_ms_p50"), 2, ""),
+            format_metric(s.get("e2e_ms_p95"), 2, ""),
+            format_metric(s.get("e2e_ms_p99"), 2, ""),
+            format_metric(s.get("prefill_tps_mean"), 2, ""),
+            format_metric(s.get("prefill_tps_median"), 2, ""),
+            format_metric(s.get("prefill_tps_std"), 2, ""),
+            format_metric(s.get("decode_tps_mean"), 2, ""),
+            format_metric(s.get("decode_tps_median"), 2, ""),
+            format_metric(s.get("decode_tps_std"), 2, ""),
+            tpot,
+            format_metric(s.get("itl_mean_ms_avg"), 2, ""),
+            format_metric(s.get("itl_p50_ms_avg"), 2, ""),
+            format_metric(s.get("itl_p95_ms_avg"), 2, ""),
+            format_metric(s.get("itl_p99_ms_avg"), 2, ""),
+            format_metric(s.get("idle_vram_mb_mean"), 2, ""),
+            format_metric(s.get("peak_vram_mb_max"), 2, ""),
+            "N/A",  # KV Cache not separately tracked here
+            format_metric(s.get("gpu_util_mean_pct_avg"), 2, ""),
+            format_metric(s.get("gpu_util_peak_pct_max"), 2, ""),
+        ]
+        lines.append("| " + " | ".join(cells) + " |")
+    lines.append("")
 
     # Accuracy table
     lines.append("## Accuracy")
     lines.append("")
+    s2_ccu1 = [s for s in summaries if s.get("scenario") == "S2" and s.get("ccu") == 1]
     accuracy_rows = [s for s in s2_ccu1 if s.get("accuracy_mean") is not None]
     if accuracy_rows:
         lines.append("| Variant | TextVQA | DocVQA | ChartQA | Mean | Loss vs FP16 |")

@@ -28,6 +28,7 @@ GPU_MONITOR_PID=""
 # --- Parse arguments ---
 SMOKE_MODE=false
 START_PHASE=0
+END_PHASE=99
 SINGLE_MODEL=""
 SKIP_BUILD=false
 
@@ -35,6 +36,7 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         --smoke) SMOKE_MODE=true; shift ;;
         --phase) START_PHASE="$2"; shift 2 ;;
+        --end-phase) END_PHASE="$2"; shift 2 ;;
         --model) SINGLE_MODEL="$2"; shift 2 ;;
         --skip-build) SKIP_BUILD=true; shift ;;
         *) echo "Unknown option: $1"; exit 1 ;;
@@ -242,7 +244,7 @@ find_mmproj() {
 # =============================================================================
 # PHASE 0 — Collect Environment (§5)
 # =============================================================================
-if [ "$START_PHASE" -le 0 ]; then
+if [ "$START_PHASE" -le 0 ] && [ "$END_PHASE" -ge 0 ]; then
     log_phase 0 "Collect Environment"
     bash scripts/collect_environment.sh
     check_success "collect_environment" 0
@@ -251,7 +253,7 @@ fi
 # =============================================================================
 # PHASE 1 — Build llama.cpp (§6)
 # =============================================================================
-if [ "$START_PHASE" -le 1 ] && [ "$SKIP_BUILD" = false ]; then
+if [ "$START_PHASE" -le 1 ] && [ "$END_PHASE" -ge 1 ] && [ "$SKIP_BUILD" = false ]; then
     log_phase 1 "Build/Validate llama.cpp"
     if [ ! -f "$LLAMA_SERVER" ]; then
         bash scripts/build_llamacpp.sh
@@ -264,7 +266,7 @@ fi
 # =============================================================================
 # PHASE 2 — Download & Convert Hugging Face Models
 # =============================================================================
-if [ "$START_PHASE" -le 2 ]; then
+if [ "$START_PHASE" -le 2 ] && [ "$END_PHASE" -ge 2 ]; then
     log_phase 2 "Download & Convert HF Models"
     bash scripts/download_and_convert_hf.sh "$SINGLE_MODEL"
     check_success "download_and_convert_hf" 2
@@ -273,7 +275,7 @@ fi
 # =============================================================================
 # PHASE 3 — Build Compatibility Matrix (§2)
 # =============================================================================
-if [ "$START_PHASE" -le 3 ]; then
+if [ "$START_PHASE" -le 3 ] && [ "$END_PHASE" -ge 3 ]; then
     log_phase 3 "Build Compatibility Matrix"
     python3 scripts/inspect_model.py --project-dir .
     check_success "inspect_model" 3
@@ -282,7 +284,7 @@ fi
 # =============================================================================
 # PHASE 4 — Validate Model Artifacts (§7)
 # =============================================================================
-if [ "$START_PHASE" -le 4 ]; then
+if [ "$START_PHASE" -le 4 ] && [ "$END_PHASE" -ge 4 ]; then
     log_phase 4 "Validate Model Artifacts"
     echo "[INFO] Model artifacts validated in Phase 3 (inspect_model.py)"
     echo "[INFO] Check results/model_manifest.csv for details."
@@ -291,7 +293,7 @@ fi
 # =============================================================================
 # PHASE 5 — Prepare Dataset (§8)
 # =============================================================================
-if [ "$START_PHASE" -le 5 ]; then
+if [ "$START_PHASE" -le 5 ] && [ "$END_PHASE" -ge 5 ]; then
     log_phase 5 "Prepare/Freeze Benchmark Dataset"
     if [ ! -f "benchmark_data/manifest.jsonl" ]; then
         python3 scripts/prepare_dataset.py --project-dir .
@@ -304,7 +306,7 @@ fi
 # =============================================================================
 # PHASE 6 — Freeze Config (§39)
 # =============================================================================
-if [ "$START_PHASE" -le 6 ]; then
+if [ "$START_PHASE" -le 6 ] && [ "$END_PHASE" -ge 6 ]; then
     log_phase 6 "Freeze Benchmark Config"
     mkdir -p "$RESULTS_DIR"
     cp configs/benchmark.yaml "$RESULTS_DIR/config_snapshot.yaml"
@@ -315,7 +317,7 @@ fi
 # =============================================================================
 # PHASE 7 — Run CCU1 Benchmark (§14: S1, S2, S3)
 # =============================================================================
-if [ "$START_PHASE" -le 7 ]; then
+if [ "$START_PHASE" -le 7 ] && [ "$END_PHASE" -ge 7 ]; then
     log_phase 7 "Run CCU1 Benchmark"
 
     MMPROJ=$(find_mmproj)
@@ -363,8 +365,12 @@ if [ "$START_PHASE" -le 7 ]; then
 
         # Run benchmark
         SCENARIOS="S1 S2 S3"
+        SMOKE_CCU1_ARGS=()
         if [ "$SMOKE_MODE" = true ]; then
             SCENARIOS="S2"
+            # Keep the Modal smoke path genuinely short while retaining a
+            # small sample for latency/throughput variation.
+            SMOKE_CCU1_ARGS=(--s2-runs 5 --warmup-requests 1)
         fi
 
         python3 scripts/benchmark_ccu1.py \
@@ -374,6 +380,7 @@ if [ "$START_PHASE" -le 7 ]; then
             --actual-quant "$MODEL_LABEL" \
             --context-per-slot "$CONTEXT_PER_SLOT" \
             --scenarios $SCENARIOS \
+            "${SMOKE_CCU1_ARGS[@]}" \
             --output results/raw/requests.csv
 
         # Collect metrics after
@@ -392,7 +399,7 @@ fi
 # =============================================================================
 # PHASE 8 — Run CCU2 Benchmark (§14: S4)
 # =============================================================================
-if [ "$START_PHASE" -le 8 ]; then
+if [ "$START_PHASE" -le 8 ] && [ "$END_PHASE" -ge 8 ]; then
     log_phase 8 "Run CCU2 Benchmark"
 
     MMPROJ=$(find_mmproj)
@@ -451,7 +458,7 @@ fi
 # =============================================================================
 # PHASE 9 — Run Accuracy (§9, §34)
 # =============================================================================
-if [ "$START_PHASE" -le 9 ]; then
+if [ "$START_PHASE" -le 9 ] && [ "$END_PHASE" -ge 9 ] && [ "$SMOKE_MODE" != true ]; then
     log_phase 9 "Run Accuracy Benchmark"
 
     MMPROJ=$(find_mmproj)
@@ -508,7 +515,7 @@ fi
 # =============================================================================
 # PHASE 10 — Validate Results (§27, §28)
 # =============================================================================
-if [ "$START_PHASE" -le 10 ]; then
+if [ "$START_PHASE" -le 10 ] && [ "$END_PHASE" -ge 10 ]; then
     log_phase 10 "Validate Results"
     python3 scripts/validate_results.py --project-dir .
 fi
@@ -516,7 +523,7 @@ fi
 # =============================================================================
 # PHASE 11 — Generate Report & Charts (§35, §36)
 # =============================================================================
-if [ "$START_PHASE" -le 11 ]; then
+if [ "$START_PHASE" -le 11 ] && [ "$END_PHASE" -ge 11 ]; then
     log_phase 11 "Generate Report & Charts"
     python3 scripts/summarize.py --project-dir .
     finalize_run 0

@@ -188,6 +188,7 @@ def run_accuracy_benchmark(
     max_samples: int,
     model_info: dict,
     project_dir: str,
+    model_name: str = "qwen3-vl",
 ) -> tuple[list[dict], dict]:
     """Run accuracy benchmark on a single dataset."""
     predictions = []
@@ -237,6 +238,7 @@ def run_accuracy_benchmark(
             prompt=accuracy_prompt,
             max_tokens=64,
             temperature=0.0,
+            model_name=model_name,
         )
 
         prediction = result.answer_text.strip() if result.success else ""
@@ -301,7 +303,15 @@ def main():
     parser.add_argument("--requested-precision", default="")
     parser.add_argument("--actual-quant", default="")
     parser.add_argument("--mode", choices=["quick", "full"], default="quick")
+    parser.add_argument(
+        "--max-samples",
+        type=int,
+        default=None,
+        help="Override the configured sample count for every dataset",
+    )
     parser.add_argument("--output-dir", default="results/accuracy")
+    parser.add_argument("--model-name", default="qwen3-vl",
+                        help="Model name for OpenAI-compatible API (must match --served-model-name)")
     args = parser.parse_args()
 
     project_dir = os.path.abspath(args.project_dir)
@@ -315,6 +325,10 @@ def main():
 
     accuracy_config = datasets_config.get("accuracy", {})
     max_samples = accuracy_config.get("quick_samples", 50) if args.mode == "quick" else accuracy_config.get("full_samples", 200)
+    if args.max_samples is not None:
+        if args.max_samples <= 0:
+            parser.error("--max-samples must be positive")
+        max_samples = args.max_samples
 
     model_info = {
         "requested_precision": args.requested_precision or args.model_label,
@@ -348,6 +362,7 @@ def main():
             max_samples=max_samples,
             model_info=model_info,
             project_dir=project_dir,
+            model_name=args.model_name,
         )
         all_predictions.extend(predictions)
         all_summaries.append(summary)

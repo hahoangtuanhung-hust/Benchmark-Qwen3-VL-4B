@@ -174,6 +174,11 @@ def main():
     parser.add_argument("--context-per-slot", type=int, default=8192)
     parser.add_argument("--scenarios", nargs="+", default=["S1", "S2", "S3"],
                         help="Scenarios to run (S1, S2, S3, S5)")
+    parser.add_argument("--s1-runs", type=int, default=None, help="Override S1 request count")
+    parser.add_argument("--s2-runs", type=int, default=None, help="Override S2 request count")
+    parser.add_argument("--s3-runs", type=int, default=None, help="Override S3 request count")
+    parser.add_argument("--s5-runs", type=int, default=None, help="Override S5 request count")
+    parser.add_argument("--warmup-requests", type=int, default=None, help="Override warm-up request count")
     parser.add_argument("--skip-warmup", action="store_true")
     args = parser.parse_args()
 
@@ -216,6 +221,17 @@ def main():
         "S3": {"dataset": "large", "runs": 10, "max_tokens": 256},
         "S5": {"dataset": "normal", "runs": 10, "max_tokens": 512},
     }
+    run_overrides = {
+        "S1": args.s1_runs,
+        "S2": args.s2_runs,
+        "S3": args.s3_runs,
+        "S5": args.s5_runs,
+    }
+    for scenario_id, override in run_overrides.items():
+        if override is not None:
+            if override <= 0:
+                parser.error(f"--{scenario_id.lower()}-runs must be positive")
+            scenario_map[scenario_id]["runs"] = override
 
     all_results = []
 
@@ -236,7 +252,11 @@ def main():
                 images=warmup_images,
                 prompt=prompt,
                 project_dir=project_dir,
-                warmup_count=bench_config["warmup_requests"],
+                warmup_count=(
+                    bench_config["warmup_requests"]
+                    if args.warmup_requests is None
+                    else max(args.warmup_requests, 0)
+                ),
             )
 
     # Run scenarios

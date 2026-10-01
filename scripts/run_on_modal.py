@@ -14,6 +14,9 @@ import sys
 import shutil
 from datetime import datetime, timezone
 
+MODAL_GPU = "L4"
+EXPECTED_GPU_NAME = "l4"
+
 # Setup paths
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_DIR = os.path.dirname(SCRIPT_DIR)
@@ -76,7 +79,7 @@ accuracy_volume = modal.Volume.from_name("qwen3-vl-benchmark-accuracy", create_i
 
 @app.function(
     image=image,
-    gpu="T4",           # You can change this to "A10G" or "A100" if you need more power/VRAM
+    gpu=MODAL_GPU,
     volumes={
         "/benchmark/models": models_volume,
         "/benchmark/benchmark_data/accuracy": accuracy_volume,
@@ -84,13 +87,19 @@ accuracy_volume = modal.Volume.from_name("qwen3-vl-benchmark-accuracy", create_i
     timeout=86400,      # Allow up to 24 hours
     cpu=8.0             # Request 8 CPU cores for fast quantization
 )
-def run_benchmark_remote(smoke: bool = False, model_name: str = "", phase: int = 0):
+def run_benchmark_remote(smoke: bool = False, model_name: str = "", phase: int = 0, end_phase: int = 99):
     """This function executes INSIDE the Modal cloud container."""
     os.chdir("/benchmark")
     
     print("=============================================")
     print(" WELCOME TO MODAL CLOUD EXECUTION")
     print("=============================================")
+    gpu_name = subprocess.check_output(
+        ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"], text=True
+    ).strip().splitlines()
+    if len(gpu_name) != 1 or EXPECTED_GPU_NAME not in gpu_name[0].lower():
+        raise RuntimeError(f"Expected exactly one NVIDIA L4 from Modal, received: {gpu_name}")
+    print(f"[INFO] Modal GPU validated: {gpu_name[0]}")
 
     # Ensure scripts are executable
     subprocess.run(["chmod", "+x", "run_benchmark.sh"], check=True)
@@ -104,12 +113,15 @@ def run_benchmark_remote(smoke: bool = False, model_name: str = "", phase: int =
         cmd.extend(["--model", model_name])
     if phase > 0:
         cmd.extend(["--phase", str(phase)])
+    if end_phase != 99:
+        cmd.extend(["--end-phase", str(end_phase)])
         
     print(f"[INFO] Executing: {' '.join(cmd)}")
     
     # Point the benchmark script to the pre-built llama.cpp directory
     env = os.environ.copy()
     env["LLAMA_CPP_DIR"] = "/opt/llama.cpp"
+    env["CUDA_ARCH"] = "89"
     
     benchmark_exit_code = 0
     try:
@@ -218,12 +230,12 @@ def _hydrate_accuracy_resume(results_root: str, current_run_dir: str) -> str | N
 
 
 @app.local_entrypoint()
-def main(smoke: bool = False, model_name: str = "", phase: int = 0):
+def main(smoke: bool = False, model_name: str = "", phase: int = 0, end_phase: int = 99):
     """This function executes LOCALLY on your machine."""
-    print(f"Deploying Benchmark to Modal (Smoke Mode: {smoke}, Model: {model_name or 'ALL'}, Phase: {phase})...")
+    print(f"Deploying Benchmark to Modal (Smoke Mode: {smoke}, Model: {model_name or 'ALL'}, Phase: {phase}, End Phase: {end_phase})...")
     
     zip_bytes, benchmark_exit_code, run_id = run_benchmark_remote.remote(
-        smoke=smoke, model_name=model_name, phase=phase
+        smoke=smoke, model_name=model_name, phase=phase, end_phase=end_phase
     )
     
     if zip_bytes:

@@ -19,6 +19,18 @@ import subprocess
 import sys
 import time
 from datetime import datetime, timezone
+import requests
+
+def get_kv_cache_usage() -> float:
+    """Fetch the KV cache usage ratio from llama.cpp server."""
+    try:
+        resp = requests.get("http://127.0.0.1:8080/metrics", timeout=0.1)
+        for line in resp.text.split("\n"):
+            if line.startswith("llamacpp:kv_cache_usage_ratio"):
+                return float(line.split()[1])
+    except Exception:
+        pass
+    return 0.0
 
 
 # --- Global stop flag ---
@@ -77,6 +89,7 @@ def run_monitor(output_path: str, interval_ms: int, gpu_index: int = 0):
     fieldnames = [
         "timestamp", "gpu_index", "memory_used_mb", "memory_total_mb",
         "gpu_util_pct", "memory_util_pct", "power_w", "temperature_c",
+        "kv_cache_usage_ratio"
     ]
 
     interval_s = interval_ms / 1000.0
@@ -92,8 +105,11 @@ def run_monitor(output_path: str, interval_ms: int, gpu_index: int = 0):
 
         while not _stop:
             rows = query_nvidia_smi()
+            kv_ratio = get_kv_cache_usage()
+
             for row in rows:
                 if row["gpu_index"] == gpu_index or gpu_index == -1:
+                    row["kv_cache_usage_ratio"] = kv_ratio
                     writer.writerow(row)
                     sample_count += 1
 

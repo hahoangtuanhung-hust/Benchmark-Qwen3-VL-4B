@@ -204,7 +204,7 @@ def prepare_dataset(project_dir: str, config_path: str):
 
             entry = {
                 "image_id": image_id,
-                "path": os.path.relpath(filepath, project_dir),
+                "path": os.path.relpath(filepath, project_dir).replace("\\", "/"),
                 "width": actual_w,
                 "height": actual_h,
                 "bytes": file_size,
