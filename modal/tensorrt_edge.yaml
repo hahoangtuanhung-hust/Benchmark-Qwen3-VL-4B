@@ -1,0 +1,60 @@
+model:
+  id: Qwen/Qwen3-VL-4B-Instruct
+  revision: main
+
+platform:
+  provider: modal
+  gpu: L4
+  expected_name: NVIDIA L4
+  architecture: Ada
+  compute_capability: "8.9"
+  expected_runtime_support: true
+
+runtime:
+  version: "0.10.1"
+  host: 127.0.0.1
+  port: 8090
+  health_timeout_s: 1800
+  max_input_len: 4096
+  max_kv_cache_capacity: 4096
+
+precisions:
+  FP16:
+    requested_semantics: weights=FP16; activations=FP16
+    quant_recipe: none
+    weight_dtype: FP16
+    activation_dtype: FP16
+  FP8:
+    requested_semantics: weights=FP8; activations=FP8
+    quant_recipe: ModelOpt FP8
+    weight_dtype: FP8
+    activation_dtype: FP8
+  INT8:
+    requested_semantics: weights=INT8; activations=INT8 (SmoothQuant)
+    quant_recipe: ModelOpt INT8_SQ
+    weight_dtype: INT8
+    activation_dtype: INT8
+  INT4:
+    requested_semantics: weights=INT4 AWQ; activations=FP16 (weight-only)
+    quant_recipe: ModelOpt INT4_AWQ
+    weight_dtype: INT4
+    activation_dtype: FP16
+  W4A16:
+    requested_semantics: weights=4-bit; activations=16-bit
+    quant_recipe: ModelOpt INT4_AWQ
+    weight_dtype: INT4
+    activation_dtype: FP16
+  W4A8:
+    requested_semantics: weights=4-bit; activations=8-bit
+    quant_recipe: unavailable in TensorRT-Edge-LLM 0.10.1
+    weight_dtype: INT4
+    activation_dtype: FP8
+
+policy:
+  visual_encoder_dtype: FP16
+  kv_cache_dtype: FP16
+  disable_cache: true
+
+evidence:
+  repository: https://github.com/NVIDIA/TensorRT-Edge-LLM
+  source_revision: v0.10.1

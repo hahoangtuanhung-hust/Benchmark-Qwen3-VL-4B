@@ -165,6 +165,7 @@ def send_vlm_request(
     seed: int = 42,
     cache_prompt: bool = False,
     timeout: int = 300,
+    model_name: str = "qwen3-vl",
 ) -> BenchmarkResult:
     """
     Send a VLM request to llama-server and measure all metrics.
@@ -198,7 +199,7 @@ def send_vlm_request(
 
     # Build request payload (OpenAI-compatible format)
     payload = {
-        "model": "qwen3-vl",
+        "model": model_name,
         "messages": [
             {
                 "role": "user",
@@ -206,7 +207,7 @@ def send_vlm_request(
                     {
                         "type": "image_url",
                         "image_url": {
-                            "url": f"data:image/jpeg;base64,{image_b64}"
+                            "url": f"data:image/{'png' if image_path.lower().endswith('.png') else 'jpeg'};base64,{image_b64}"
                         }
                     },
                     {
@@ -219,12 +220,7 @@ def send_vlm_request(
         "max_tokens": max_tokens,
         "temperature": temperature,
         "stream": True,
-        "seed": seed,
     }
-
-    # Add cache_prompt control if supported
-    if not cache_prompt:
-        payload["cache_prompt"] = False
 
     url = f"{server_url}/v1/chat/completions"
 

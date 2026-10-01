@@ -2,11 +2,17 @@
 # Qwen3-VL-4B Benchmark Makefile
 # =============================================================================
 
-.PHONY: help env build dataset inspect smoke benchmark accuracy report validate clean
+.PHONY: help env build dataset inspect smoke benchmark accuracy cpu-smoke cpu-benchmark modal-llamacpp-smoke modal-llamacpp-benchmark modal-preflight modal-smoke modal-benchmark modal-benchmark-detach modal-download report validate clean
 
 PYTHON ?= python3
 PROJECT_DIR ?= .
 SERVER_URL ?= http://127.0.0.1:8080
+
+ifeq ($(OS),Windows_NT)
+MODAL_RUN = set PYTHONIOENCODING=utf-8&& set PYTHONUTF8=1&& modal run
+else
+MODAL_RUN = PYTHONIOENCODING=utf-8 PYTHONUTF8=1 modal run
+endif
 
 help: ## Show this help
 	@echo "Qwen3-VL-4B Benchmark Suite"
@@ -38,6 +44,33 @@ benchmark: ## Run full benchmark (all phases)
 
 accuracy: ## Run accuracy benchmark only
 	bash run_benchmark.sh --phase 9
+
+cpu-smoke: ## Run isolated local CPU smoke benchmark
+	$(PYTHON) scripts/run_cpu_benchmark.py --smoke
+
+cpu-benchmark: ## Run isolated local CPU benchmark (does not use Modal/GPU results)
+	$(PYTHON) scripts/run_cpu_benchmark.py
+
+modal-llamacpp-smoke: ## Run llama.cpp smoke suite on the same Modal L4
+	$(MODAL_RUN) scripts/run_on_modal.py --smoke
+
+modal-llamacpp-benchmark: ## Run the full llama.cpp suite on the same Modal L4
+	$(MODAL_RUN) scripts/run_on_modal.py
+
+modal-preflight: ## Validate TensorRT-Edge-LLM on the pinned Modal L4
+	$(MODAL_RUN) modal/benchmark_entry.py --preflight-only
+
+modal-smoke: ## Run TensorRT-Edge-LLM smoke suite on Modal L4
+	$(MODAL_RUN) modal/benchmark_entry.py --suite all --smoke
+
+modal-benchmark: ## Run the full supported TensorRT-Edge-LLM suite on Modal L4
+	$(MODAL_RUN) modal/benchmark_entry.py --suite all
+
+modal-benchmark-detach: ## Run TensorRT-Edge-LLM on Modal L4 (detached — safe to close terminal)
+	$(MODAL_RUN) --detach modal/benchmark_entry.py --suite all --no-download
+
+modal-download: ## Download results from a detached Modal run (usage: make modal-download RUN_ID=run_xxx)
+	$(MODAL_RUN) modal/benchmark_entry.py --download-only $(RUN_ID)
 
 validate: ## Validate benchmark results
 	$(PYTHON) scripts/validate_results.py --project-dir $(PROJECT_DIR)
