@@ -1,0 +1,150 @@
+backend,run_id,pair_id,scenario,requested_precision,actual_precision,quant_recipe,gpu,gpu_arch,image_id,width,height,input_tokens,output_tokens,ccu,ttft_ms,ttfv_ms,e2e_ms,image_load_ms,image_preprocess_ms,vision_encode_ms,visual_projection_ms,prefill_ms,first_decode_ms,prefill_scope,prefill_tps,decode_tps,decode_tps_source,tpot_ms,itl_mean_ms,itl_p50_ms,itl_p95_ms,itl_p99_ms,itl_measurement_method,idle_vram_mb,peak_vram_mb,kv_cache_mb,gpu_util_mean,gpu_util_peak,http_status,success,error,answer_text
+tensorrt_edge,c3cdd27ab3b3,,S2,FP16,FP16,none,NVIDIA L4,Ada,normal_0000,1271,718,539,178,1,128.26262800000165,128.26262800000165,6542.561294000009,,,,,,,combined_or_unavailable,,27.75857330593817,client_fallback,36.23897551412434,,,,,stream_event_not_token_level,11190.0,11210.0,,93.2,100.0,200,True,,"- **Test Image**: “normal_0000” — labeled as “Conference room with presentation slide.”
+- **Metadata**:
+  - ID: normal_0000
+  - Resolution: 1271x718
+  - Value A: 1976
+  - Value B: 77.72
+  - Status: inactive
+  - Category: Gamma
+- **Visual Elements**:
+  - Grid background with teal squares.
+  - Various colored shapes: 
+    - A vertical gray rectangle.
+    - A horizontal pink rectangle.
+    - A yellow circle.
+    - A light green square.
+    - A purple rectangle.
+    - A pink circle.
+    - A light blue circle.
+    - A small white circle.
+    - A small gray circle.
+  - All shapes have white borders."
+tensorrt_edge,37e5dd9e3b76,,S2,FP16,FP16,none,NVIDIA L4,Ada,normal_0001,1273,719,539,185,1,131.98452800000382,131.98452800000382,6810.311167999998,,,,,,,combined_or_unavailable,,27.708120741835806,client_fallback,36.29525347826084,,,,,stream_event_not_token_level,11190.0,11210.0,,93.2,100.0,200,True,,"The image displays a red grid background with several colored shapes and text elements on the left side.
+
+Important objects:
+- A green rectangle with a small gray circle on its top-right.
+- A yellow rectangle to the right of the green one.
+- A light green circle near the bottom center.
+- A gray circle to the right of the light green one.
+- A pink circle near the top-right.
+- A large light green circle at the bottom-right.
+
+Text elements:
+- Top-left: “Test Image: normal_0001” and “Parking lot with numbered spaces and signs”.
+- Left side: “ID: normal_0001”, “Resolution: 1273x719”, “Value A: 86.48”, “Value B: 98.45”, “Status: inactive”, “Category: Delta”.
+
+No events are depicted."
+tensorrt_edge,a6e0d23b0734,,S2,FP16,FP16,none,NVIDIA L4,Ada,normal_0002,1286,716,509,211,1,124.09502699999564,124.09502699999564,7738.883980999986,,,,,,,combined_or_unavailable,,27.718419190059063,client_fallback,36.260899780952336,,,,,stream_event_not_token_level,11190.0,11210.0,,93.2,100.0,200,True,,"The image displays a teal grid background with several colored geometric shapes and textual metadata on the left.
+
+Important objects:
+- A light green square in the upper right.
+- A light green circle near the top right.
+- A yellow rectangle in the lower center.
+- A light blue rectangle in the lower right.
+- A pink rectangle below the light blue one.
+- A light green circle near the bottom center, overlapping the pink rectangle.
+- A large cyan circle in the bottom right corner.
+
+Text elements:
+- Top left: “Test Image: normal_0002”
+- Below that: “Library bookshelf with spine titles”
+- Left column: 
+  - “ID: normal_0002”
+  - “Resolution: 1288x718”
+  - “Value A: 4218”
+  - “Value B: 23 11”
+  - “Status: Active”
+  - “Category: Gamma”
+
+No events are depicted. The image is static and informational."
+tensorrt_edge,9d3d050d419e,,S2,FP16,FP16,none,NVIDIA L4,Ada,normal_0003,1273,716,509,136,1,117.54011899999739,117.54011899999739,5015.69301100001,,,,,,,combined_or_unavailable,,27.775039730363204,client_fallback,36.28261401481491,,,,,stream_event_not_token_level,11190.0,11210.0,,93.2,100.0,200,True,,"- Test image: normal_0003
+- Kitchen recipe card with ingredients list (light green rectangle)
+- ID: normal_0003
+- Resolution: 1273x716
+- Value A: 6885
+- Value B: 4918
+- Status: Active
+- Category: Alpha
+- Multiple colored shapes (rectangles and circles) scattered across the grid
+- One rectangle labeled “Kitchen recipe card with ingredients list” is positioned near top center
+- Other shapes include red, pink, beige, light blue, purple, and light green circles/rectangles distributed across the grid"
+tensorrt_edge,087658ad683c,,S2,FP16,FP16,none,NVIDIA L4,Ada,normal_0004,1288,723,509,111,1,117.82656300000838,117.82656300000838,4092.235744000007,,,,,,,combined_or_unavailable,,27.94095372366159,client_fallback,36.13099255454544,,,,,stream_event_not_token_level,11190.0,11210.0,,93.2,100.0,200,True,,"- Test Image: normal_0004
+- Control panel with buttons and status lights
+- ID: normal_0004
+- Resolution: 1288x723
+- Value A: 8299
+- Value B: 53.99
+- Status: Active
+- Category: Alpha
+- Objects: Various colored rectangles and circles on a green grid background. Includes light blue, olive, purple, blue, beige, yellow, and cyan shapes. Some shapes overlap."
+tensorrt_edge,d86a28627576,pair-001,S4,FP16,FP16,none,NVIDIA L4,Ada,normal_0000,1271,718,539,178,2,134.4220579999984,134.4220579999984,6553.04218900001,,,,,,,combined_or_unavailable,,27.792611700445192,client_fallback,36.26339057062153,,,,,stream_event_not_token_level,11210.0,11210.0,,93.31313131313131,97.0,200,True,,"- **Test Image**: “normal_0000” — labeled as “Conference room with presentation slide.”
+- **Metadata**:
+  - ID: normal_0000
+  - Resolution: 1271x718
+  - Value A: 1976
+  - Value B: 77.72
+  - Status: inactive
+  - Category: Gamma
+- **Visual Elements**:
+  - Grid background with teal squares.
+  - Various colored shapes: 
+    - A vertical gray rectangle.
+    - A horizontal pink rectangle.
+    - A yellow circle.
+    - A light green square.
+    - A purple rectangle.
+    - A pink circle.
+    - A light blue circle.
+    - A small white circle.
+    - A small gray circle.
+  - All shapes have white borders."
+tensorrt_edge,d8eb35840c8d,pair-001,S4,FP16,FP16,none,NVIDIA L4,Ada,normal_0001,1273,719,539,185,2,6663.275960999997,6663.275960999997,13344.450448000003,,,,,,,combined_or_unavailable,,27.695999844194326,client_fallback,36.31073090760873,,,,,stream_event_not_token_level,11210.0,11210.0,,93.31313131313131,97.0,200,True,,"The image displays a red grid background with several colored shapes and text elements on the left side.
+
+Important objects:
+- A green rectangle with a small gray circle on its top-right.
+- A yellow rectangle to the right of the green one.
+- A light green circle near the bottom center.
+- A gray circle to the right of the light green one.
+- A pink circle near the top-right.
+- A large light green circle at the bottom-right.
+
+Text elements:
+- Top-left: “Test Image: normal_0001” and “Parking lot with numbered spaces and signs”.
+- Left side: “ID: normal_0001”, “Resolution: 1273x719”, “Value A: 86.48”, “Value B: 98.45”, “Status: inactive”, “Category: Delta”.
+
+No events are depicted."
+tensorrt_edge,e6c9ffe531d9,pair-002,S4,FP16,FP16,none,NVIDIA L4,Ada,normal_0002,1286,716,509,211,2,119.7897539999957,119.7897539999957,7735.131942000009,,,,,,,combined_or_unavailable,,27.757150099411923,client_fallback,36.263534228571494,,,,,stream_event_not_token_level,11210.0,11210.0,,93.31313131313131,97.0,200,True,,"The image displays a teal grid background with several colored geometric shapes and textual metadata on the left.
+
+Important objects:
+- A light green square in the upper right.
+- A light green circle near the top right.
+- A yellow rectangle in the lower center.
+- A light blue rectangle in the lower right.
+- A pink rectangle below the light blue one.
+- A light green circle near the bottom center, overlapping the pink rectangle.
+- A large cyan circle in the bottom right corner.
+
+Text elements:
+- Top left: “Test Image: normal_0002”
+- Below that: “Library bookshelf with spine titles”
+- Left column: 
+  - “ID: normal_0002”
+  - “Resolution: 1288x718”
+  - “Value A: 4218”
+  - “Value B: 23 11”
+  - “Status: Active”
+  - “Category: Gamma”
+
+No events are depicted. The image is static and informational."
+tensorrt_edge,2a6cb3b92a60,pair-002,S4,FP16,FP16,none,NVIDIA L4,Ada,normal_0003,1273,716,509,136,2,7837.312080000003,7837.312080000003,12731.236476999997,,,,,,,combined_or_unavailable,,27.80138712759893,client_fallback,36.25129182962958,,,,,stream_event_not_token_level,11210.0,11210.0,,93.31313131313131,97.0,200,True,,"- Test image: normal_0003
+- Kitchen recipe card with ingredients list (light green rectangle)
+- ID: normal_0003
+- Resolution: 1273x716
+- Value A: 6885
+- Value B: 4918
+- Status: Active
+- Category: Alpha
+- Multiple colored shapes (rectangles and circles) scattered across the grid
+- One rectangle labeled “Kitchen recipe card with ingredients list” is positioned near top center
+- Other shapes include red, pink, beige, light blue, purple, and light green circles/rectangles distributed across the grid"

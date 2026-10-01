@@ -25,5 +25,8 @@ matplotlib>=3.7.0
 # Progress display
 tqdm>=4.65.0
 
+# Per-process CPU/RAM monitoring for the local CPU benchmark
+psutil>=5.9.0
+
 # Cloud Execution (Phase 3)
 modal>=0.60.0

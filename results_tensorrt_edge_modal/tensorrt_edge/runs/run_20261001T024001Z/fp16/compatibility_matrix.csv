@@ -1,0 +1,6 @@
+requested_precision,requested_semantics,model_supported,hardware_supported,runtime_supported,quant_recipe,weight_dtype,activation_dtype,kv_cache_dtype,visual_encoder_dtype,status,evidence,notes
+FP16,weights=FP16; activations=FP16,True,True,True,none,FP16,FP16,FP16,FP16,SUPPORTED_EXACT,,
+FP8,weights=FP8; activations=FP8,True,True,True,ModelOpt FP8,FP8,FP8,FP16,FP16,SUPPORTED_WITH_RECIPE,,Hardware capability alone does not prove the requested runtime recipe
+INT4,weights=INT4 AWQ; activations=FP16 (weight-only),True,True,True,ModelOpt INT4_AWQ,INT4,FP16,FP16,FP16,SUPPORTED_WITH_RECIPE,,
+W4A16,weights=4-bit; activations=16-bit,True,True,True,ModelOpt INT4_AWQ,INT4,FP16,FP16,FP16,SUPPORTED_WITH_RECIPE,,
+W4A8,weights=4-bit; activations=8-bit,True,True,False,unavailable in TensorRT-Edge-LLM 0.10.1,INT4,FP8,FP16,FP16,UNSUPPORTED,,Hardware capability alone does not prove the requested runtime recipe; 0.10.1 methods list has INT4_AWQ but no W4A8 recipe
