@@ -24,3 +24,9 @@ llama.cpp/build-cpu/
 benchmark_data/
 *.zip
 *.log
+
+# Large models and weights
+*.safetensors
+*.gguf
+*.bin
+*.pt
